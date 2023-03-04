@@ -8,17 +8,17 @@ int bootCountReceived = -1;
 #define DEVICE_NAME "sleep_esp32"
 WiFiClient espClient;
 HADevice device(DEVICE_NAME);
-HAMqtt mqtt(espClient, device);
+HAMqtt mqtt(espClient, device, 6, 1); // QoS = 1
 HASensorNumber bootCountSensor("bootCount", HASensorNumber::PrecisionP0);
 
 void onMessage(const char* topic, const uint8_t* payload, uint16_t length) {
-    Serial.printf("New message on topic: %s: %s\n", topic, (const char *)payload);
+    Serial.printf("%05lu: New message on topic: %s: %s\n", millis(), topic, (const char *)payload);
 }
 
 // After deep sleep, the ESP32 will always re-start from setup().
 void setup() {
   Serial.begin(9600);
-  Serial.printf("\n\nWelcome. bootCount =  %d\n", bootCount);
+  Serial.printf("\n\n%05lu: Welcome. bootCount = %d\n", millis(), bootCount);
 
   // Home Assistant
   device.setName("Sleep ESP32");
@@ -27,26 +27,30 @@ void setup() {
 
   // Wifi
   WiFi.mode(WIFI_STA); WiFi.begin(SSID, PASSWORD);
-  if (WiFi.waitForConnectResult() != WL_CONNECTED) { Serial.printf("No Wifi\n"); return; }
-  Serial.print("Connected to WiFi: "); Serial.println(WiFi.localIP());
+  if (WiFi.waitForConnectResult(10000L) != WL_CONNECTED) { Serial.printf("%05lu: No Wifi\n", millis()); return; }
+  Serial.printf("%05lu: Connected to WiFi: ", millis()); Serial.println(WiFi.localIP());
 
   // mqtt
   mqtt.begin(MQTT_HOST, MQTT_USER, MQTT_PASSWORD); mqtt.onMessage(onMessage);
   for (int i = 0; i < 100; i++) {  mqtt.loop(); delay(10); if (mqtt.isConnected()) break; }
-  if (!mqtt.isConnected()) { Serial.printf("No mqtt\n"); return; }
-  Serial.printf("Connected to mqtt\n");
+  if (!mqtt.isConnected()) { Serial.printf("%05lu: No mqtt\n", millis()); return; }
+  Serial.printf("%05lu: Connected to mqtt\n", millis());
+  delay(100);
 
-  // Publish and subscribe
-  bootCountSensor.setValue(bootCount);
-  mqtt.subscribe("aha/" DEVICE_NAME "/bootCount/stat_t");
-  for (int i = 0; i < 200; i++) { mqtt.loop(); delay(10); }
+  // Subscribe
+  if (!mqtt.subscribe("aha/" DEVICE_NAME "/bootCount/stat_t")) { Serial.printf("%05lu: Failed to subscribe to bootCount. Error %i\n", millis(), mqtt.lastError()); return; };
+  Serial.printf("%05lu: Subscribed to bootCount sensor\n", millis());
 
+  // Publish
+  if (!bootCountSensor.setValue(bootCount)) { Serial.printf("%05lu: Failed to publish bootCount sensor. Error %i\n", millis(), mqtt.lastError()); return;};
+  Serial.printf("%05lu: Published bootCount sensor value: %d\n", millis(), bootCount);
   bootCount++;
 }
 
 // loop() code can also be in setup, but we come here by return if connections don't work.
 void loop() { 
-  Serial.printf("Goodnight!\n");
-  esp_sleep_enable_timer_wakeup(5000000L);
+  Serial.printf("%05lu: Goodnight!\n", millis());
+  delay(500); // Need some delay here to avoid watchdog timeout when starting deep sleep.
+  esp_sleep_enable_timer_wakeup(1000000L);
   esp_deep_sleep_start();
 }
